@@ -17,6 +17,7 @@ export default function Home() {
       columnHelper.accessor('name', { header: 'Name' }),
       columnHelper.accessor('domain', { header: 'Domain' }),
       columnHelper.accessor('country', { header: 'Country' }),
+      columnHelper.accessor('city', { header: 'City' }),
       columnHelper.accessor('employee_size', { header: 'Size' }),
     ],
     []
