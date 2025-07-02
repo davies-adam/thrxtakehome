@@ -1,49 +1,13 @@
 import OpenAI from 'openai'
-import { CompanyInput, EMPLOYEE_SIZE_BUCKETS } from '@/types/database'
+import { CompanyInput, EmployeeSize } from '@/types/database'
+import { COUNTRY_MAPPINGS } from './country-list'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY})
 
-// Country code mapping
-const countryMap: Record<string, string> = {
-  'us': 'United States',
-  'usa': 'United States',
-  'united states': 'United States',
-  'uk': 'United Kingdom',
-  'gb': 'United Kingdom',
-  'united kingdom': 'United Kingdom',
-  'ca': 'Canada',
-  'canada': 'Canada',
-  'de': 'Germany',
-  'germany': 'Germany',
-  'fr': 'France',
-  'france': 'France',
-  'au': 'Australia',
-  'australia': 'Australia',
-  'jp': 'Japan',
-  'japan': 'Japan',
-  'cn': 'China',
-  'china': 'China',
-  'in': 'India',
-  'india': 'India',
-}
-
-export function cleanCountry(country: string): string {
-  if (!country) return ''
-  const cleaned = country.toLowerCase().trim()
-  return countryMap[cleaned] || country
-}
-
-export function cleanDomain(domain: string): string {
-  if (!domain) return ''
-  return domain.toLowerCase().trim().replace(/\s+/g, '')
-}
-
-export function categorizeEmployeeSize(size: string): string {
+function categorizeEmployeeSize(size: string): EmployeeSize {
   if (!size) return '1-10'
   
-  const num = parseInt(size.replace(/[^\d]/g, ''))
+  const num = parseInt(size)
   if (isNaN(num)) return '1-10'
   
   if (num <= 10) return '1-10'
@@ -56,10 +20,58 @@ export function categorizeEmployeeSize(size: string): string {
   return '10 000+'
 }
 
-export async function enrichWithAI(rawData: Record<string, unknown>): Promise<Partial<CompanyInput>> {
-  try {
-    const prompt = `Clean and standardize this company data. Return JSON with:\n- name: clean company name\n- domain: valid domain (lowercase, no spaces)\n- country: full country name\n- city: clean city name (optional)\n- employee_size: one of [${EMPLOYEE_SIZE_BUCKETS.join(', ')}]\n\nRaw data: ${JSON.stringify(rawData)}\n\nReturn only valid JSON:`
 
+function normaliseCountry(iso_3166_1: string): string {
+  return iso_3166_1 in COUNTRY_MAPPINGS ? COUNTRY_MAPPINGS[iso_3166_1.toLowerCase()] : ''
+}
+
+function normaliseDomain(rawDomain: string): string {  
+  try {
+    let domain = rawDomain.trim().toLowerCase()
+    if (!domain.startsWith('http://') && !domain.startsWith('https://')) {
+      domain = 'https://' + domain
+    }
+    return new URL(domain).hostname
+  } catch {
+    return ''
+  }
+}
+
+
+const ENRICHMENT_SYSTEM_PROMPT = `
+You are a helpful assistant dealing with messy, inconsistent data describing a number of corporate entities.
+You will be given a messy set of key-value pairs (in the following JSON format) and you will need to clean and standardize each key-value pair.
+
+For example, given the following JSON:
+{"name": "Apple Inc.", "domain": " apple. com", "country": "U S of A",  "city": "Cupertino, CA, USA", "employee_size": "100000++"}
+
+You should return:
+{
+  "name": "Apple", // As a bare string corresponding to the company name alone, without the "Inc." or "LLC" or other legal suffixes
+  "domain": "apple.com", // As a likely, valid domain name
+  "country": "us", // A 2-letter ISO 3166-1 alpha-2 country code like us, gb, jp, etc.
+  "city": "Cupertino", // As a bare string corresponding to the city name alone, without state, province, or country
+  "employee_size": "10000" // As an integer
+}
+
+For another example, given the following JSON:
+{"name": "Friendly Unnamed", "domain": " Inc", "country": "China",  "city": "Hangzhou", "employee_size": "4,000"}
+
+You should return:
+{
+  "name": "Friendly Unnamed", // As a bare string corresponding to the company name alone, without the "Inc." or "LLC" or other legal suffixes
+  "domain": "", // As a likely, valid domain name. If the domain is not clear, return an empty string.
+  "country": "cn", // A 2-letter ISO 3166-1 alpha-2 country code like us, gb, jp, etc.
+  "city": "Hangzhou", // As a bare string corresponding to the city name alone, without state, province, or country
+  "employee_size": "4000" // As an integer
+}
+
+ALWAYS provide a valid name. All other fields can be empty strings if not clear.
+`
+
+export async function standardiseWithAI(rawData: Record<string, unknown>): Promise<Partial<CompanyInput>> {
+  try {
+    const prompt = ENRICHMENT_SYSTEM_PROMPT + `\n\nRaw data: ${JSON.stringify(rawData)}\n\nReturn only valid JSON with no markdown:`
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
@@ -69,7 +81,16 @@ export async function enrichWithAI(rawData: Record<string, unknown>): Promise<Pa
     const response = completion.choices[0]?.message?.content
     if (!response) throw new Error('No AI response')
 
-    return JSON.parse(response)
+    const aiNormalised = JSON.parse(response)
+    return {
+      name: aiNormalised.name,
+      domain: normaliseDomain(aiNormalised.domain),
+      country: normaliseCountry(aiNormalised.country),
+      city: aiNormalised.city,
+      employee_size: categorizeEmployeeSize(aiNormalised.employee_size.toString()),
+      raw_json: rawData
+    }
+
   } catch (error) {
     console.error('AI enrichment failed:', error)
     return {}

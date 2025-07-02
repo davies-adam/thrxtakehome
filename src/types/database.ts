@@ -7,7 +7,6 @@ export interface Company {
   employee_size: string
   raw_json: Record<string, unknown>
   created_at: string
-  updated_at: string
 }
 
 export interface CompanyInput {

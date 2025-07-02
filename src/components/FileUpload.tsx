@@ -27,8 +27,6 @@ export default function FileUpload() {
       const result = await response.json()
 
       if (response.ok) {
-        setMessage(`Success! ${result.message}`)
-        // Trigger a page refresh to show new data
         window.location.reload()
       } else {
         setMessage(`Error: ${result.error}`)

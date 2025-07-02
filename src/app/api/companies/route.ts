@@ -3,27 +3,26 @@ import { supabase } from '@/lib/supabase'
 
 export async function GET(request: NextRequest) {
   try {
+    let query = supabase.from('companies').select('*').order('name')
+
     const { searchParams } = new URL(request.url)
-    const country = searchParams.get('country')
-    const employee_size = searchParams.get('employee_size')
-    const domain = searchParams.get('domain')
 
-    let query = supabase
-      .from('companies')
-      .select('*')
-      .order('name')
+    const exactMatchFilters = ["country", "employee_size"]
+    const partialMatchFilters = ["domain"]
 
-    if (country) {
-      query = query.ilike('country', `%${country}%`)
-    }
+    exactMatchFilters.forEach((param: string) => {
+      const value = searchParams.get(param)
+      if (value) {
+        query = query.eq(param, value)
+      }
+    })
 
-    if (employee_size) {
-      query = query.eq('employee_size', employee_size)
-    }
-
-    if (domain) {
-      query = query.ilike('domain', `%${domain}%`)
-    }
+    partialMatchFilters.forEach((param: string) => {
+      const value = searchParams.get(param)
+      if (value) {
+        query = query.ilike(param, `%${value}%`)
+      }
+    })
 
     const { data, error } = await query
 
